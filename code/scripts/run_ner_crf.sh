@@ -1,6 +1,6 @@
 CURRENT_DIR=`pwd`
 export BERT_BASE_DIR=../pretrain_model/bert-base-chinese
-export OUTPUR_DIR=../outputs/crf/
+export OUTPUR_DIR=../outputs/crf
 TASK_NAME="queryner"
 #
 python run_ner_crf.py \

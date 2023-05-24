@@ -20,6 +20,9 @@ class Span_Dataset(Dataset):
 
         df = pd.read_csv(file_name)
 
+
+
+
         # 生成datalist 'text', 'label:[{start_idx,end_idx,type,entity} ]
 
         query = df['query'].to_list()

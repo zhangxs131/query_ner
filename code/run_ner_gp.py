@@ -8,22 +8,27 @@ import numpy as np
 import torch.nn as nn
 
 from transformers import WEIGHTS_NAME, AutoConfig, AutoTokenizer
-from models.bert_gp import BertGPForNer
+from models.bert_gp import BertGPForNer,ErnieGPForNer,NezhaGPForNer,ElectraGPForNer
 from processors.ner_gp import gen_dataloader,gen_test_dataloader
 from metrics.gp_metric import GPEntityScore
 
 from optimizer.gp_opt import get_optimizer
+from util_func.kl_loss import compute_kl_loss
 from util_func.args import get_args
 from util_func.seed import set_seed
 from util_func.adv import FGM
 from util_func.init_logger import init_logger, logger
 from util_func.progressbar import ProgressBar
 from util_func.read_file import read_label_list
+from util_func.data_format import gen_BIO
 
 
 MODEL_CLASSES = {
     ## bert ernie bert_wwm bert_wwwm_ext
     'bert': (AutoConfig, BertGPForNer, AutoTokenizer),
+    'ernie':(AutoConfig, ErnieGPForNer, AutoTokenizer),
+    'nezha':(AutoConfig, NezhaGPForNer, AutoTokenizer),
+    'electra':(AutoConfig, ElectraGPForNer, AutoTokenizer),
 }
 
 
@@ -103,6 +108,19 @@ def train(args, model, tokenizer):
 
             # loss 计算
             loss = outputs["loss"]
+
+            #rdrop
+            if args.do_rdrop:
+                outputs2 = model(**batch.clone())
+                loss2=outputs2["loss"]
+                logits = outputs['logits']
+                logits2=outputs2['logits']
+
+                ce_loss = 0.5 * (loss + loss2)
+                bh = logits.shape[0] * logits.shape[1]
+                kl_loss = compute_kl_loss(logits.reshape([bh, -1]), logits2.reshape([bh, -1]))
+                loss = ce_loss + args.rdrop_rate * kl_loss
+
             if args.n_gpu > 1:
                 loss = loss.mean()  # mean() to average on multi-gpu parallel training
             if args.gradient_accumulation_steps > 1:
@@ -112,6 +130,7 @@ def train(args, model, tokenizer):
                     scaled_loss.backward()
             else:
                 loss.backward()
+
             if args.do_adv:
                 fgm.attack()
                 loss_adv = model(**batch)["loss"]
@@ -220,63 +239,86 @@ def evaluate(args, dev_dataloader,model, prefix=""):
         logger.info(info)
     return results
 
-def predict(args, model, tokenizer, prefix=""):
-    pred_output_dir = args.output_dir
-    if not os.path.exists(pred_output_dir) and args.local_rank in [-1, 0]:
-        os.makedirs(pred_output_dir)
+def predict(args, model, tokenizer,threshold=0,prefix=""):
+    # 多卡预测
+    if args.n_gpu > 1:
+        model = torch.nn.DataParallel(model)
 
-    test_dataloader=gen_test_dataloader(args.predict_data_path, tokenizer, batch_size=args.per_gpu_eval_batch_size)
+    test_dataloader,dataset=gen_test_dataloader(args.predict_data_path, tokenizer, batch_size=args.per_gpu_eval_batch_size,max_length=args.eval_max_seq_length, return_dataset=True)
 
     # Eval!
     logger.info("***** Running prediction %s *****", prefix)
     logger.info("  Num examples = %d", len(test_dataloader))
-    logger.info("  Batch size = %d", 1)
-    results = []
-    output_predict_file = os.path.join(pred_output_dir, prefix, "test_prediction.json")
+    logger.info("  Batch size = %d",args.per_gpu_eval_batch_size )
+
     pbar = ProgressBar(n_total=len(test_dataloader), desc="Predicting")
+    nums = 0
 
-    if isinstance(model, nn.DataParallel):
-        model = model.module
-    for step, batch in enumerate(test_dataloader):
-        model.eval()
+    model.eval()
+    with open(args.result_data_path, 'w',encoding='utf-8') as f:
+        if args.save_type == 'span_csv':
+            f.write('query' + '\t' + 'label'+ '\n')
         with torch.no_grad():
-            label_offset_mapping=batch.pop('offset_mapping').cpu().numpy()
-            for key in batch:
-                batch[key] = batch[key].to(args.device)
+            for step, batch in enumerate(test_dataloader):
+                label_offset_mapping=batch.pop('offset_mapping').cpu().numpy()
+                for key in batch:
+                    batch[key] = batch[key].to(args.device)
 
-            if args.model_type != "distilbert":
-                # XLM and RoBERTa don"t use segment_ids
-                batch["token_type_ids"] = (batch['token_type_ids'] if args.model_type in ["bert", "xlnet"] else None)
-            outputs = model(**batch)
+                outputs = model(**batch)
 
-        logits = outputs['logits']
-        pred= logits.cpu().numpy()
-        batch_size = pred.shape[0]
+                logits = outputs['logits']
+                pred= logits.cpu().numpy()
+                batch_size = pred.shape[0]
 
-        for k in range(batch_size):
-            try:
+                for k in range(batch_size):
+                    try:
 
-                offset_mapping = label_offset_mapping[k]
-                entities = []
+                        offset_mapping = label_offset_mapping[k].tolist()
+                        entities = []
 
-                for category, start, end in zip(*np.where(pred[k] > 0)):
-                    entitie = {
-                        "start_idx": offset_mapping[start][0],
-                        "end_idx": offset_mapping[end][-1],
-                        "type": args.id2label[category]
-                    }
-                    entities.append(entitie)
-            except Exception as e:
-                print(e.args)
-                continue
+                        text = dataset[nums]
+                        nums += 1
 
-            results.append(entities)
+                        for category, start, end in zip(*np.where(pred[k] > threshold)):
 
-        pbar(step)
-    logger.info("\n")
-    with open(output_predict_file, "w") as writer:
-        for record in results:
-            writer.write(json.dumps(record) + '\n')
+                            entitie_ = {
+                                "start": offset_mapping[start][0],
+                                "end": offset_mapping[end - 1][-1],
+                                "text": text[offset_mapping[start][0]:offset_mapping[end - 1][-1]],
+                                "labels": args.id2label[category]
+                            }
+
+                            if entitie_['text'] == '':
+                                continue
+
+                            entities.append(entitie_)
+
+                        #save result
+                        #可以选择保存不同类似文件格式，与训练文件相同的span类型，BIO txt ，以及目前贝基那边工程接口输出的csv类型
+                        if args.save_type == 'bio_txt':
+                            bio_result = gen_BIO(text, entities)
+                            text=list(text)
+                            for id in range(len(text)):
+                                f.write(text[id] + '\t' + bio_result[id] + '\n')
+                            f.write('\n')
+                        elif args.save_type == 'span_csv':
+                            f.write(text + '\t' + json.dumps(entities, ensure_ascii=False) + '\n')
+
+                        elif args.save_type == 'span_json':
+                            v={'query': text, 'label': entities}
+                            f.write(json.dumps(v, ensure_ascii=False) + '\n')
+                        elif args.save_type == 'bio_csv':
+                            bio_result = gen_BIO(text, entities)
+                            v = {'tokens': list(text), 'labels': bio_result}
+                            f.write(text + '\t' + json.dumps({text: v}, ensure_ascii=False) + '\n')
+                        else:
+                            pass
+                    except:
+                         print('error')
+                         nums += 1
+
+                pbar(step)
+            logger.info("\n")
 
 def main():
     args = get_args()
@@ -349,20 +391,16 @@ def main():
         # Good practice: save your training arguments together with the trained model
         torch.save(args, os.path.join(args.output_dir, "training_args.bin"))
 
+    if (not args.do_train) and args.do_eval:
+        args.train_batch_size = args.per_gpu_train_batch_size * max(1, args.n_gpu)
+        train_dataloader, dev_dataloader = gen_dataloader(args.train_data_path, args.dev_data_path, tokenizer,
+                                                          args.train_batch_size, label_txt=args.label_txt)
+        evaluate(args, dev_dataloader, model)
+
+
     if args.do_predict and args.local_rank in [-1, 0]:
-        tokenizer = tokenizer_class.from_pretrained(args.output_dir, do_lower_case=args.do_lower_case)
-        checkpoints = [args.output_dir]
-        if args.predict_checkpoints > 0:
-            checkpoints = list(
-                os.path.dirname(c) for c in sorted(glob.glob(args.output_dir + '/**/' + WEIGHTS_NAME, recursive=True)))
-            logging.getLogger("transformers.modeling_utils").setLevel(logging.WARN)  # Reduce logging
-            checkpoints = [x for x in checkpoints if x.split('-')[-1] == str(args.predict_checkpoints)]
-        logger.info("Predict the following checkpoints: %s", checkpoints)
-        for checkpoint in checkpoints:
-            prefix = checkpoint.split('/')[-1] if checkpoint.find('checkpoint') != -1 else ""
-            model = model_class.from_pretrained(checkpoint)
-            model.to(args.device)
-            predict(args, model, tokenizer, prefix=prefix)
+
+        predict(args, model, tokenizer)
 
 if __name__ == "__main__":
     main()

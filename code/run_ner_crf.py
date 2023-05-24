@@ -86,8 +86,11 @@ def train(args, model, tokenizer):
     for epoch in range(int(args.num_train_epochs)):
         pbar.reset()
         pbar.epoch_start(current_epoch=epoch)
+        s_time = time.time()
         for step, batch in enumerate(train_dataloader):
             model.train()
+            t1=time.time()
+            print('load dataloader time is {}'.format(t1-s_time))
             # Skip past any already trained steps if resuming training
             if steps_trained_in_current_epoch > 0:
                 steps_trained_in_current_epoch -= 1
@@ -101,6 +104,8 @@ def train(args, model, tokenizer):
                 batch["token_type_ids"] = (batch["token_type_ids"] if args.model_type in ["bert", "xlnet"] else None)
             outputs = model(**batch)
 
+            t2 = time.time()
+            print('pass the model time is {}'.format(t2-t1))
             # loss 计算
             loss = outputs["loss"]
             if args.n_gpu > 1:
@@ -112,6 +117,10 @@ def train(args, model, tokenizer):
                     scaled_loss.backward()
             else:
                 loss.backward()
+
+            t3 = time.time()
+            print('loss backwards time  is {}'.format(t3 - t2))
+
             if args.do_adv:
                 fgm.attack()
                 loss_adv = model(**batch)["loss"]
@@ -159,6 +168,8 @@ def train(args, model, tokenizer):
                     torch.save(scheduler.state_dict(), os.path.join(output_dir, "scheduler.pt"))
                     logger.info("Saving optimizer and scheduler states to %s", output_dir)
 
+            s_time=time.time()
+
         logger.info("\n")
         if 'cuda' in str(args.device):
             torch.cuda.empty_cache()
@@ -180,6 +191,8 @@ def evaluate(args, dev_dataloader,model, prefix=""):
     logger.info("  Batch size = %d", args.eval_batch_size)
     eval_loss = 0.0
     nb_eval_steps = 0
+    if isinstance(model, nn.DataParallel):
+        model = model.module
 
     pbar = ProgressBar(n_total=len(dev_dataloader), desc="Evaluating")
     for step, batch in enumerate(dev_dataloader):
@@ -324,6 +337,7 @@ def main():
     config_class, model_class, tokenizer_class = MODEL_CLASSES[args.model_type]
     config = config_class.from_pretrained(args.model_name_or_path,num_labels=len(label_list))
     tokenizer = tokenizer_class.from_pretrained(args.model_name_or_path,do_lower_case=args.do_lower_case)
+    #tokenizer.pad_token_id = 0
     model = model_class.from_pretrained(args.model_name_or_path,config=config)
     if args.local_rank == 0:
         torch.distributed.barrier()  # Make sure only the first process in distributed training will download model & vocab

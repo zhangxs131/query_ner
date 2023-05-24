@@ -19,11 +19,11 @@ def collate_fn(batch, tokenizer, label_list):
         label_ids = []
         for word_idx in word_ids:
             if word_idx is None:
-                label_ids.append(-100)
+                label_ids.append(0)
             elif word_idx != previous_word_idx:
                 label_ids.append(label2id[label[word_idx]])
             else:
-                label_ids.append(-100)
+                label_ids.append(0)
             previous_word_idx = word_idx
 
         labels.append(label_ids)
@@ -55,7 +55,7 @@ def gen_dataloader(train_data_path,dev_data_path, tokenizer, batch_size=32, labe
 
 
 def gen_test_dataloader(file_dir, tokenizer, batch_size=1):
-    if file_dir.split(',')[-1] == 'txt':
+    if file_dir.split('.')[-1] == 'txt':
         text = read_label_list(file_dir)
         test_loader = DataLoader(text, batch_size=batch_size, shuffle=False,
                                  collate_fn=lambda x: collate_fn_test(x, tokenizer=tokenizer))

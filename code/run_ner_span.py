@@ -8,7 +8,7 @@ import torch.nn as nn
 import numpy as np
 
 from transformers import WEIGHTS_NAME, AutoConfig, AutoTokenizer
-from models.bert_span import BertSpanForNer
+from models.bert_span import BertSpanForNer,ErnieSpanForNer,NezhaSpanForNer,ElectraSpanForNer
 from processors.ner_span import gen_dataloader,gen_test_dataloader
 from processors.utils_ner import get_entities
 from metrics.span_metric import SpanEntityScore
@@ -20,10 +20,14 @@ from util_func.adv import FGM
 from util_func.init_logger import init_logger, logger
 from util_func.progressbar import ProgressBar
 from util_func.read_file import read_label_list
+from util_func.data_format import gen_BIO
 
 MODEL_CLASSES = {
     ## bert ernie bert_wwm bert_wwwm_ext
     'bert': (AutoConfig, BertSpanForNer, AutoTokenizer),
+    'ernie':(AutoConfig, ErnieSpanForNer, AutoTokenizer),
+    'nezha':(AutoConfig, NezhaSpanForNer, AutoTokenizer),
+    'electra':(AutoConfig, ElectraSpanForNer, AutoTokenizer),
 }
 
 def train(args, model, tokenizer):
@@ -246,7 +250,7 @@ def predict(args, model, tokenizer, prefix=""):
     if not os.path.exists(pred_output_dir) and args.local_rank in [-1, 0]:
         os.makedirs(pred_output_dir)
 
-    test_dataloader=gen_test_dataloader(args.predict_data_path, tokenizer, batch_size=args.per_gpu_eval_batch_size)
+    test_dataloader,dataset=gen_test_dataloader(args.predict_data_path, tokenizer, batch_size=args.per_gpu_eval_batch_size,return_dataset=True)
 
     # Eval!
     logger.info("***** Running prediction %s *****", prefix)
@@ -255,46 +259,73 @@ def predict(args, model, tokenizer, prefix=""):
     results = []
     output_predict_file = os.path.join(pred_output_dir, prefix, "test_prediction.json")
     pbar = ProgressBar(n_total=len(test_dataloader), desc="Predicting")
+    nums=0
 
     if isinstance(model, nn.DataParallel):
         model = model.module
-    for step, batch in enumerate(test_dataloader):
-        model.eval()
-        with torch.no_grad():
-            label_offset_mapping=batch.pop('offset_mapping').cpu().numpy()
-            for key in batch:
-                batch[key] = batch[key].to(args.device)
 
-            if args.model_type != "distilbert":
-                # XLM and RoBERTa don"t use segment_ids
-                batch["token_type_ids"] = (batch['token_type_ids'] if args.model_type in ["bert", "xlnet"] else None)
-            outputs = model(**batch)
+    with open(args.result_data_path, 'w', encoding='utf-8') as f:
+        for step, batch in enumerate(test_dataloader):
+            model.eval()
+            with torch.no_grad():
+                label_offset_mapping=batch.pop('offset_mapping').cpu().numpy()
+                for key in batch:
+                    batch[key] = batch[key].to(args.device)
 
-        start_logits,end_logits = outputs['start_logits'],outputs['end_logits']
+                if args.model_type != "distilbert":
+                    # XLM and RoBERTa don"t use segment_ids
+                    batch["token_type_ids"] = (batch['token_type_ids'] if args.model_type in ["bert", "xlnet"] else None)
+                outputs = model(**batch)
 
-        start_pred = torch.argmax(start_logits, -1).cpu().numpy()
-        end_pred = torch.argmax(end_logits, -1).cpu().numpy()
+            start_logits,end_logits = outputs['start_logits'],outputs['end_logits']
 
-        seq_lengths = batch['attention_mask'].sum(dim=1)
-        batch_size = len(start_logits)
+            start_pred = torch.argmax(start_logits, -1).cpu().numpy()
+            end_pred = torch.argmax(end_logits, -1).cpu().numpy()
 
-        for k in range(batch_size):
-            S = []
-            for i, s_l in enumerate(start_pred[k][:seq_lengths[k]]):
-                if s_l == 0:
-                    continue
-                for j, e_l in enumerate(end_pred[k][i:seq_lengths[k]]):
-                    if s_l == e_l:
-                        S.append((args.id2label[s_l], label_offset_mapping[k][i][0], label_offset_mapping[k][i + j][-1]))
-                        break
+            seq_lengths = batch['attention_mask'].sum(dim=1)
+            batch_size = len(start_logits)
 
-            results.append(S)
+            for k in range(batch_size):
+                entities = []
+                text = dataset[nums]
+                nums += 1
 
-        pbar(step)
-    logger.info("\n")
-    with open(output_predict_file, "w") as writer:
-        for record in results:
-            writer.write(json.dumps(record) + '\n')
+                for i, s_l in enumerate(start_pred[k][:seq_lengths[k]]):
+                    if s_l == 0:
+                        continue
+                    for j, e_l in enumerate(end_pred[k][i:seq_lengths[k]]):
+                        if s_l == e_l:
+                            entitie_ = {
+                                "start":label_offset_mapping[k][i][0],
+                                "end": label_offset_mapping[k][i + j][-1],
+                                "text": text[label_offset_mapping[k][i][0]:label_offset_mapping[k][i + j][-1]],
+                                "labels": args.id2label[s_l]
+                            }
+                            entities.append((args.id2label[s_l], label_offset_mapping[k][i][0], label_offset_mapping[k][i + j][-1]))
+                            break
+
+                            # 可以选择保存不同类似文件格式，与训练文件相同的span类型，BIO txt ，以及目前贝基那边工程接口输出的csv类型
+                if args.save_type == 'bio_txt':
+                    bio_result = gen_BIO(text, entities)
+                    text = list(text)
+                    for id in range(len(text)):
+                        f.write(text[id] + '\t' + bio_result[id] + '\n')
+                    f.write('\n')
+                elif args.save_type == 'span_csv':
+                    f.write(text + '\t' + json.dumps(entities, ensure_ascii=False) + '\n')
+
+                elif args.save_type == 'span_json':
+                    v = {'query': text, 'label': entities}
+                    f.write(json.dumps(v, ensure_ascii=False) + '\n')
+                elif args.save_type == 'bio_csv':
+                    bio_result = gen_BIO(text, entities)
+                    v = {'tokens': list(text), 'labels': bio_result}
+                    f.write(text + '\t' + json.dumps({text: v}, ensure_ascii=False) + '\n')
+                else:
+                    pass
+
+            pbar(step)
+        logger.info("\n")
 
 def main():
     args = get_args()

@@ -55,7 +55,7 @@ def gen_dataloader(train_data_path,dev_data_path ,tokenizer, batch_size=32, labe
 
 
 def gen_test_dataloader(file_dir, tokenizer, batch_size=1):
-    if file_dir.split(',')[-1] == 'txt':
+    if file_dir.split('.')[-1] == 'txt':
         text = read_label_list(file_dir)
         test_loader = DataLoader(text, batch_size=batch_size, shuffle=False,
                                  collate_fn=lambda x: collate_fn_test(x, tokenizer=tokenizer))

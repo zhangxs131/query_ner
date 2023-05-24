@@ -1,16 +1,15 @@
 CURRENT_DIR=`pwd`
-export BERT_BASE_DIR=../pretrain_model/bert-base-chinese
-export OUTPUR_DIR=../outputs/gp/
+export BERT_BASE_DIR=../pretrain_model/roberta-wwm-chinese
+export OUTPUR_DIR=../outputs/gp
 TASK_NAME="queryner"
 #
 python run_ner_gp.py \
   --model_type=bert \
   --train_data_path ../data/test_data/train.csv \
-  --dev_data_path ../data/test_data/dev.csv \
+  --dev_data_path ../data/test_data/dev_full.csv \
   --label_txt ../data/label_dir/label.txt \
   --model_name_or_path=$BERT_BASE_DIR \
   --task_name=$TASK_NAME \
-  --do_train \
   --do_eval \
   --do_lower_case \
   --train_max_seq_length=128 \

@@ -8,7 +8,7 @@ import torch.nn as nn
 import numpy as np
 
 from transformers import WEIGHTS_NAME, AutoConfig, AutoTokenizer
-from models.bert_baffine import BertBiaffineForNer
+from models.bert_baffine import BertBiaffineForNer,NezhaBiaffineForNer,ErnieBiaffineForNer,ElectraBiaffineForNer
 from processors.ner_baffine import gen_dataloader,gen_test_dataloader
 from metrics.baffine_metric import BaffineEntityScore
 
@@ -23,7 +23,11 @@ from util_func.read_file import read_label_list
 MODEL_CLASSES = {
     ## bert ernie bert_wwm bert_wwwm_ext
     'bert': (AutoConfig, BertBiaffineForNer, AutoTokenizer),
+    'ernie':(AutoConfig, ErnieBiaffineForNer, AutoTokenizer),
+    'nezha':(AutoConfig, NezhaBiaffineForNer, AutoTokenizer),
+    'electra':(AutoConfig, ElectraBiaffineForNer, AutoTokenizer),
 }
+
 
 def train(args, model, tokenizer):
     """ Train the model """

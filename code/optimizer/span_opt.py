@@ -12,7 +12,12 @@ def get_optimizer(args,model,length):
 
     # Prepare optimizer and schedule (linear warmup and decay)
     no_decay = ["bias", "LayerNorm.weight"]
-    bert_parameters = model.bert.named_parameters()
+    if args.model_type == 'ernie':
+        bert_parameters = model.ernie.named_parameters()
+    elif args.model_type == 'electra':
+        bert_parameters = model.electra.named_parameters()
+    else:
+        bert_parameters = model.bert.named_parameters()
     start_parameters = model.start_fc.named_parameters()
     end_parameters = model.end_fc.named_parameters()
     optimizer_grouped_parameters = [

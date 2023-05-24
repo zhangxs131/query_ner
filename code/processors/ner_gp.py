@@ -1,10 +1,11 @@
+import pandas as pd
 from torch.utils.data import Dataset,DataLoader
 from processors.span_dataset import Span_Dataset
 from util_func.read_file import read_label_list
 import torch
 
 
-def collate_fn(batch,tokenizer,label_list):
+def collate_fn(batch,tokenizer,label_list,max_length=128):
 
     num_categories=len(label_list)
     label2id={k:v for v,k in enumerate(label_list)}
@@ -34,6 +35,8 @@ def collate_fn(batch,tokenizer,label_list):
                 end_idx = end_mapping[info_['end']]
                 if start_idx > end_idx or info_['entity'] == '':
                     continue
+                if info_['type'] not in label2id:
+                    continue
 
                 global_label[id,label2id[info_['type']], start_idx, end_idx + 1] = 1
 
@@ -43,13 +46,13 @@ def collate_fn(batch,tokenizer,label_list):
 
     return inputs
 
-def collate_fn_test(batch, tokenizer):
-    inputs = tokenizer([i['text'] for i in batch], padding="max_length", truncation=True, max_length=512,
+def collate_fn_test(batch, tokenizer,max_length=32):
+    inputs = tokenizer(batch, padding="max_length", truncation=True, max_length=max_length,
                        return_tensors='pt',return_offsets_mapping=True)
     return inputs
 
 
-def gen_dataloader(train_data_path,dev_data_path ,tokenizer, batch_size=32, label_txt=None):
+def gen_dataloader(train_data_path,dev_data_path ,tokenizer, batch_size=32, label_txt=None,max_length=32):
     train_dataset = Span_Dataset(train_data_path)
     dev_dataset = Span_Dataset(dev_data_path)
 
@@ -57,23 +60,29 @@ def gen_dataloader(train_data_path,dev_data_path ,tokenizer, batch_size=32, labe
         label_txt=read_label_list(label_txt)
 
     train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True,
-                                  collate_fn=lambda x: collate_fn(x, tokenizer, label_txt))
+                                  collate_fn=lambda x: collate_fn(x, tokenizer, label_txt,max_length=max_length))
     dev_dataloader = DataLoader(dev_dataset, batch_size=batch_size, shuffle=False,
-                                collate_fn=lambda x: collate_fn(x, tokenizer, label_txt))
+                                collate_fn=lambda x: collate_fn(x, tokenizer, label_txt,max_length=max_length))
 
     return train_dataloader, dev_dataloader
 
 
-def gen_test_dataloader(file_dir, tokenizer, batch_size=1):
-    if file_dir.split(',')[-1] == 'txt':
+def gen_test_dataloader(file_dir, tokenizer, batch_size=1,max_length=32,return_dataset=False):
+    if file_dir.split('.')[-1] == 'txt':
         text = read_label_list(file_dir)
         test_loader = DataLoader(text, batch_size=batch_size, shuffle=False,
-                                 collate_fn=lambda x: collate_fn_test(x, tokenizer=tokenizer))
-    else:
-        test_loader = None
-        print('predict file should be txt line')
+                                 collate_fn=lambda x: collate_fn_test(x, tokenizer=tokenizer,max_length=max_length))
+    elif file_dir.endswith('.csv'):
+        df=pd.read_csv(file_dir,header=None)
+        text=df[1].tolist()
+        test_loader = DataLoader(text, batch_size=batch_size, shuffle=False,
+                                 collate_fn=lambda x: collate_fn_test(x, tokenizer=tokenizer,max_length=max_length))
 
-    return test_loader
+    if return_dataset:
+
+        return test_loader,text
+    else:
+        return test_loader
 
 
 def main():

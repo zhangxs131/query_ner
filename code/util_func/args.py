@@ -6,10 +6,8 @@ def get_args():
     BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
     parser = argparse.ArgumentParser(description="ner")
-
+    parser.add_argument("--task_name", default="queryner",type=str, help="task name")
     # Required parameters
-    parser.add_argument("--task_name", default=None, type=str, required=True,
-                        help="The name of the task to train selected in the list: ")
     parser.add_argument("--train_data_path", default=os.path.join(BASE_DIR, "data/contest_data/train_data"),
                         type=str, help="train data file path")
     parser.add_argument("--dev_data_path", default=None,
@@ -24,9 +22,13 @@ def get_args():
                         help="Path to pre-trained model or shortcut name selected in the list: ")
     parser.add_argument("--output_dir", default=None, type=str, required=True,
                         help="The output directory where the model predictions and checkpoints will be written.", )
+    parser.add_argument("--save_type", default="span_csv", type=str, required=False,
+                        help="The type of the predict result file.", )
+    parser.add_argument("--result_data_path", default="../results/result.csv", type=str, required=False,
+                        help="The predict result data path to save the result file.", )
 
     # Other parameters
-    parser.add_argument('--markup', default='bios', type=str,
+    parser.add_argument('--markup', default='bio', type=str,
                         choices=['bios', 'bio'])
     parser.add_argument('--loss_type', default='ce', type=str,
                         choices=['lsr', 'focal', 'ce'])
@@ -39,19 +41,19 @@ def get_args():
     parser.add_argument("--train_max_seq_length", default=128, type=int,
                         help="The maximum total input sequence length after tokenization. Sequences longer "
                              "than this will be truncated, sequences shorter will be padded.", )
-    parser.add_argument("--eval_max_seq_length", default=512, type=int,
+    parser.add_argument("--eval_max_seq_length", default=128, type=int,
                         help="The maximum total input sequence length after tokenization. Sequences longer "
                              "than this will be truncated, sequences shorter will be padded.", )
+
     parser.add_argument("--do_train", action="store_true",
                         help="Whether to run training.")
     parser.add_argument("--do_eval", action="store_true",
                         help="Whether to run eval on the dev set.")
     parser.add_argument("--do_predict", action="store_true",
                         help="Whether to run predictions on the test set.")
-    parser.add_argument("--evaluate_during_training", action="store_true",
-                        help="Whether to run evaluation during training at each logging step.", )
     parser.add_argument("--do_lower_case", action="store_true",
                         help="Set this flag if you are using an uncased model.")
+
 
     # adversarial training
     parser.add_argument("--do_adv", action="store_true",
@@ -60,6 +62,7 @@ def get_args():
                         help="Epsilon for adversarial.")
     parser.add_argument('--adv_name', default='word_embeddings', type=str,
                         help="name for adversarial layer.")
+
 
     #nums
     parser.add_argument("--per_gpu_train_batch_size", default=8, type=int,
@@ -86,13 +89,10 @@ def get_args():
                         help="Proportion of training to perform linear learning rate warmup for,E.g., 0.1 = 10% of training.")
 
 
+
     #log and eval steps
     parser.add_argument("--logging_steps", type=int, default=-1,help="Log every X updates steps.")
     parser.add_argument("--save_steps", type=int, default=-1, help="Save checkpoint every X updates steps.")
-    parser.add_argument("--eval_all_checkpoints", action="store_true",
-                        help="Evaluate all checkpoints starting with the same prefix as model_name ending and ending with step number", )
-    parser.add_argument("--predict_checkpoints", type=int, default=0,
-                        help="predict checkpoints starting with the same prefix as model_name ending and ending with step number")
     parser.add_argument("--no_cuda", action="store_true", help="Avoid using CUDA when available")
     parser.add_argument("--overwrite_output_dir", action="store_true",
                         help="Overwrite the content of the output directory")
@@ -115,7 +115,7 @@ def get_args():
     parser.add_argument("--swa_lr", default=0.01, type=float)
 
     # 使用rdrop
-    parser.add_argument("--rdrop", action="store_true")
+    parser.add_argument("--do_rdrop", action="store_true")
     parser.add_argument("--rdrop_rate", default=0.5, type=float)
 
     args = parser.parse_args()
